@@ -3,6 +3,7 @@ package notifiers
 import (
 	"crypto/tls"
 	"fmt"
+	"strings"
 
 	"github.com/go-mail/mail"
 	"github.com/statping-ng/emails"
@@ -155,6 +156,7 @@ func (e *emailer) OnSave() (string, error) {
 func (e *emailer) dialSend(email *emailOutgoing) error {
 	mailer = mail.NewDialer(e.Host.String, int(e.Port.Int64), e.Username.String, e.Password.String)
 	m := mail.NewMessage()
+	recipients := e.SplitEmailAddresses(email.To)
 	// if email setting TLS is Disabled
 	if e.ApiKey.String == "true" {
 		mailer.SSL = false
@@ -163,7 +165,7 @@ func (e *emailer) dialSend(email *emailOutgoing) error {
 	}
 
 	m.SetAddressHeader("From", email.From, "Statping")
-	m.SetHeader("To", email.To)
+	m.SetHeader("To", recipients...)
 	m.SetHeader("Subject", email.Subject)
 	m.SetBody("text/html", email.Template)
 
@@ -173,4 +175,19 @@ func (e *emailer) dialSend(email *emailOutgoing) error {
 	}
 
 	return nil
+}
+
+func (e *emailer) SplitEmailAddresses(input string) []string {
+	parts := strings.Split(input, ",") // split string by comma
+	var result []string
+
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part) // remove whitespaces
+		if trimmed != "" {                 // ignore empty strings
+			result = append(result, trimmed)
+		}
+	}
+
+	fmt.Println(result)
+	return result
 }
