@@ -1,4 +1,3 @@
-# Stage 1: Frontend build
 FROM node:16.14.0-alpine AS frontend
 LABEL maintainer="Statping-ng (https://github.com/statping-ng)"
 ARG BUILDPLATFORM
@@ -9,27 +8,29 @@ RUN yarn install --pure-lockfile --network-timeout 1000000
 COPY ./frontend .
 RUN yarn build && yarn cache clean
 
-# Stage 2: Backend build
-FROM --platform=linux/amd64 golang:1.20.0 AS backend
+# Statping Golang BACKEND building from source
+# Creates "/go/bin/statping" and "/usr/local/bin/sass" for copying
+FROM golang:1.19-alpine AS backend
 LABEL maintainer="Statping-NG (https://github.com/statping-ng)"
 ARG VERSION
 ARG COMMIT
 ARG BUILDPLATFORM
-ARG TARGETARCH=amd64  # Убедимся, что архитектура задана явно
-
-# Устанавливаем окружение для сборки под amd64
-ENV GOOS=linux GOARCH=amd64 CGO_ENABLED=1
-
-RUN dpkg --add-architecture amd64
-RUN apt-get update && apt-get install -y \
-    gcc g++ make git autoconf \
-    libtool wget curl jq && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+ARG TARGETARCH
+ENV GO111MODULE on
+ENV CGO_ENABLED=1
+ENV GOOS linux
+ENV GOARCH amd64
+# RUN apk add --no-cache libstdc++ gcc g++ make git autoconf \
+#     libtool ca-certificates linux-headers wget curl jq && \
+#     update-ca-certificates
+RUN apk add --no-cache libstdc++ gcc g++ make git autoconf libc-dev libgcc \
+    libtool ca-certificates linux-headers wget curl jq build-base clang musl-dev && \
+    update-ca-certificates
 
 WORKDIR /root
 RUN git clone --depth 1 --branch 3.6.2 https://github.com/sass/sassc.git
 RUN . sassc/script/bootstrap && make -C sassc -j4
+# sassc binary: /root/sassc/bin/sassc
 
 WORKDIR /go/src/github.com/statping-ng/statping-ng
 ADD go.mod go.sum ./
@@ -43,23 +44,21 @@ COPY source ./source
 COPY types ./types
 COPY utils ./utils
 COPY --from=frontend /statping/dist/ ./source/dist/
-
-# RUN go install github.com/GeertJohan/go.rice/rice@latest && \
-#     echo $(go env GOPATH)/bin && ls $(go env GOPATH)/bin
-# RUN cd source && rice embed-go
+# RUN go install github.com/GeertJohan/go.rice/rice@latest
 RUN go install github.com/GeertJohan/go.rice/rice@latest && \
     export PATH=/go/bin/linux_amd64:$PATH && \
     cd source && rice embed-go
-RUN go build -a -ldflags "-s -w -extldflags -static -X main.VERSION=$VERSION -X main.COMMIT=$COMMIT" -o statping --tags "musl netgo linux" ./cmd
+# RUN cd source && rice embed-go
+RUN go build -a -ldflags "-s -w -extldflags -static -X main.VERSION=1 -X main.COMMIT=0" -o statping --tags "netgo linux sqlite_omit_load_extension" ./cmd
 RUN chmod a+x statping && mv statping /go/bin/statping
+# /go/bin/statping - statping binary
+# /root/sassc/bin/sassc - sass binary
+# /statping - Vue frontend (from frontend)
 
-# Stage 3: Final image based on Amazon Linux 2
-FROM amazonlinux:2
-LABEL maintainer="Statping-NG (https://github.com/statping-ng)"
+# Statping main Docker image that contains all required libraries
+FROM alpine:latest
 
-RUN yum install -y libgcc libstdc++ ca-certificates curl jq && \
-    yum clean all && \
-    update-ca-trust
+RUN apk --no-cache add libgcc libstdc++ ca-certificates curl jq && update-ca-certificates
 
 COPY --from=backend /go/bin/statping /usr/local/bin/
 COPY --from=backend /root/sassc/bin/sassc /usr/local/bin/
